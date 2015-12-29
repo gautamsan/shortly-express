@@ -88,6 +88,9 @@ function(req, res) {
     }
   });
 });
+/*
+    Authentication
+*/
 
 app.get('/login', 
 function(req, res) {
@@ -126,6 +129,12 @@ function(req, res){
         res.redirect('/');
       });
     });
+});
+
+app.get('/logout',
+function(req, res){
+  delete req.session.user;
+  res.redirect('/login');
 });
 
 app.get('/*', function(req, res) {
