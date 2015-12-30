@@ -4,6 +4,10 @@ var partials = require('express-partials');
 var bodyParser = require('body-parser');
 var session = require('express-session');
 var bcrypt = require('bcrypt-nodejs');
+var keys = require('./secrets/keys');
+var passport = require('passport');
+var localStrategy = require('passport-local').Strategy;
+var githubStrategy = require('passport-github2').Strategy;
 
 var db = require('./app/config');
 var Users = require('./app/collections/users');
@@ -11,6 +15,35 @@ var User = require('./app/models/user');
 var Links = require('./app/collections/links');
 var Link = require('./app/models/link');
 var Click = require('./app/models/click');
+
+passport.use(new localStrategy(function(username, password, done) {
+  new User({'username' : username}).fetch()
+    .then(function(model) {
+      if(!model) return done(null, false);
+      model.comparePassword(password, function(result) {
+        console.log(result, ' in login process');
+        if(result) {
+          return done(null, username);
+        }else{
+          return done(null, false);
+        }
+      })
+    });
+}));
+passport.serializeUser(function(user, done) {
+  done(null, user);
+});
+passport.deserializeUser(function(user, done) {
+  done(null, user);
+})
+passport.use(new githubStrategy({
+  clientID: keys.ClientID,
+  clientSecret: keys.ClientSecret,
+  callbackURL: 'http://127.0.0.1:4568/loginGitHub/callback'
+}, function(accessToken, refreshToken, profile, done) {
+  console.log("github", profile)
+  done(null, profile.username);
+}));
 
 var app = express();
 
@@ -25,34 +58,21 @@ app.use(session({
   resave: true, 
   saveUninitialized: true
 }));
+app.use(passport.initialize());
+app.use(passport.session());
 
-app.get('/', 
-function(req, res) {
-  if(req.session.user) {
+app.get('/', util.checkUser, function(req, res) {
     res.render('index');
-  } else {
-    res.redirect('/login');
-  }
 });
 
-app.get('/create', 
-function(req, res) {
-  if(req.session.user) {
+app.get('/create', util.checkUser, function(req, res) {
     res.render('index');
-  } else {
-    res.redirect('/login');
-  }
 });
 
-app.get('/links', 
-function(req, res) {
-  if(req.session.user){
+app.get('/links', util.checkUser, function(req, res) {
     Links.reset().fetch().then(function(links) {
       res.send(200, links.models);
     });
-  }else{
-    res.redirect('/login');
-  }
 });
 
 app.post('/links', 
@@ -102,30 +122,19 @@ function(req, res) {
   res.render('signup');
 });
 
-app.post('/login', 
+app.post('/login',
+  passport.authenticate('local'), 
   function(req, res) {
-    new User({'username' : req.body.username}).fetch()
-      .then(function(model) {
-        if(!model) res.redirect('/login');
-        model.comparePassword(req.body.password, function(result) {
-          if(result) {
-            req.session.save(function(err) {
-              req.session.user = req.body.username;
-              res.redirect('/');
-            });
-          }else{
-            res.redirect('/login');
-          }
-        })
-      });
-  });
+    res.redirect('/');
+  }
+);
 
 app.post('/signup', 
 function(req, res){
   new User({'username': req.body.username, 'password': req.body.password}).save()
     .then(function() {
-      req.session.save(function(err) {
-        req.session.user = req.body.username;
+      req.session.regenerate(function(err) {
+        req.session.passport.user = req.body.username;
         res.redirect('/');
       });
     });
@@ -133,9 +142,17 @@ function(req, res){
 
 app.get('/logout',
 function(req, res){
-  delete req.session.user;
+  req.logout();
   res.redirect('/login');
 });
+/*
+    GitHub Authorization
+*/
+app.get('/loginGitHub', passport.authenticate('github', {scope: ['user:email']}));
+app.get('/loginGitHub/callback', passport.authenticate('github', {failureRedirect: '/login'}), 
+  function(req, res) {
+    res.redirect('/');
+  });
 
 app.get('/*', function(req, res) {
   new Link({ code: req.params[0] }).fetch().then(function(link) {
@@ -161,3 +178,4 @@ app.get('/*', function(req, res) {
 
 console.log('Shortly is listening on 4568');
 app.listen(4568);
+
